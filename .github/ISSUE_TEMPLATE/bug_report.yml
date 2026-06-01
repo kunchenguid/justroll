@@ -1,0 +1,88 @@
+name: Bug report
+description: Something went wrong with a justroll recording
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug!
+
+        The two most useful things you can include are the `session.json` written next to your recording and, if a source failed, what the dashboard showed for it (for example `✗ no signal` or `◐ no frames`).
+
+        **Where to find session.json**
+
+        justroll writes one per recording at:
+
+        ```
+        <your-recordings-dir>/<YYYY-MM-DD_title>/session.json
+        ```
+
+        It lists the devices, codecs, durations, and byte sizes for the take - no titles you would not expect, but redact the folder path if it is sensitive.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: A short description of what you expected and what actually happened.
+      placeholder: I selected two screens and the camera, hit start, and screen-1.mkv came out empty while the others recorded fine.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: How to reproduce
+      description: The command you ran and the devices you picked.
+      placeholder: |
+        1. Run `justroll "my video"`
+        2. Pick the Rode mic, both screens, and the capture card
+        3. Record for ~10s and press Ctrl+C
+    validations:
+      required: true
+
+  - type: input
+    id: justroll-version
+    attributes:
+      label: justroll version
+      description: Output of `justroll --version`.
+      placeholder: "0.1.0"
+    validations:
+      required: true
+
+  - type: input
+    id: platform
+    attributes:
+      label: macOS and Node version
+      description: From `sw_vers -productVersion` and `node --version`.
+      placeholder: "macOS 15.3 / Node v24.13.1"
+    validations:
+      required: true
+
+  - type: input
+    id: ffmpeg
+    attributes:
+      label: ffmpeg version
+      description: First line of `ffmpeg -version`.
+      placeholder: "ffmpeg version 8.1"
+
+  - type: textarea
+    id: selftest
+    attributes:
+      label: --selftest output
+      description: |
+        Please paste the output of `justroll --selftest --seconds 6`.
+        It runs the full capture pipeline headlessly and prints per-source results plus any ffmpeg error, which usually pinpoints the failure.
+      render: text
+
+  - type: textarea
+    id: session
+    attributes:
+      label: session.json (optional)
+      description: Contents of the failing recording's `session.json`.
+      render: json
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Screenshots of the dashboard, hunches, related issues, whatever seems relevant.

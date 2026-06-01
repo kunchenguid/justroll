@@ -1,0 +1,6 @@
+node_modules/
+.preview/
+.spike/
+*.log
+.DS_Store
+.lavish

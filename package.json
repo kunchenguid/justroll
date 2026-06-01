@@ -1,0 +1,66 @@
+{
+  "name": "justroll",
+  "version": "0.1.0",
+  "packageManager": "pnpm@11.1.1",
+  "description": "One-command multi-source screen + camera session recorder with a live waveform TUI. Just roll.",
+  "type": "module",
+  "bin": {
+    "justroll": "bin/justroll.js"
+  },
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test",
+    "start": "node bin/justroll.js",
+    "selftest": "node bin/justroll.js --selftest",
+    "demo": "node bin/justroll.js --demo",
+    "lint": "eslint src bin test scripts",
+    "format": "prettier --write \"{src,bin,test,scripts}/**/*.{js,mjs}\"",
+    "format:check": "prettier --check \"{src,bin,test,scripts}/**/*.{js,mjs}\""
+  },
+  "keywords": [
+    "screen-recording",
+    "obs",
+    "ffmpeg",
+    "tui",
+    "ink",
+    "recorder",
+    "video-editing"
+  ],
+  "license": "MIT",
+  "files": [
+    "bin",
+    "src",
+    "LICENSE",
+    "README.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kunchenguid/justroll.git"
+  },
+  "bugs": {
+    "url": "https://github.com/kunchenguid/justroll/issues"
+  },
+  "homepage": "https://github.com/kunchenguid/justroll",
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "chalk": "^5.6.2",
+    "htm": "^3.1.1",
+    "ink": "^7.0.0",
+    "react": "^19.2.6"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.0.0",
+    "eslint": "^9.0.0",
+    "eslint-config-prettier": "^10.0.0",
+    "globals": "^16.0.0",
+    "ink-testing-library": "^4.0.0",
+    "prettier": "^3.0.0"
+  }
+}
