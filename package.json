@@ -1,6 +1,6 @@
 {
   "name": "justroll",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "packageManager": "pnpm@11.1.1",
   "description": "One-command multi-source screen + camera session recorder with a live waveform TUI. Just roll.",
   "type": "module",
