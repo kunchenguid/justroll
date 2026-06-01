@@ -1,0 +1,14 @@
+packages:
+  - "."
+
+# Supply-chain guardrails.
+# Refuse to install package versions published within the last 7 days (10080
+# minutes), giving time for a malicious or compromised release to be caught and
+# yanked before it lands in the lockfile. Strict mode fails the install rather
+# than silently falling back.
+minimumReleaseAge: 10080
+minimumReleaseAgeStrict: true
+# Only justroll itself is exempt (so its own freshly-published releases install).
+# Every third-party package, direct and transitive, goes through the age gate.
+minimumReleaseAgeExclude:
+  - justroll
