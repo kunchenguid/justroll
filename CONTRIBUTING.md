@@ -4,6 +4,7 @@ Thanks for wanting to contribute.
 One rule up front:
 
 **Human-authored pull requests targeting `main` must be raised through [`no-mistakes`](https://github.com/kunchenguid/no-mistakes).**
+We require this to reduce the maintainer's burden of reviewing and merging contributions.
 
 `no-mistakes` puts a local git proxy in front of your real remote.
 Pushing through it runs an AI-driven review/test/lint pipeline in an isolated worktree, forwards the push upstream only after every check passes, and opens a clean PR automatically.
@@ -34,8 +35,7 @@ See the [no-mistakes quick start](https://kunchenguid.github.io/no-mistakes/star
   justroll has no build step and no TypeScript - it runs directly under `node`.
   Install dependencies with `pnpm install`.
 - ffmpeg must be on your PATH (`brew install ffmpeg`) to run the app or the `--selftest` pipeline check.
-- Use TDD for bug fixes and new features.
-  Tests live under `test/` and run with the built-in `node:test` runner (`pnpm test`).
+- Tests live under `test/` and run with the built-in `node:test` runner (`pnpm test`).
   UI is rendered and asserted with `ink-testing-library`; the engine is exercised headlessly via `node bin/justroll.js --selftest`.
 - Run `pnpm run lint`, `pnpm run format:check`, and `pnpm test` before pushing.
   The pipeline will run them again, but a fast local pass saves rounds.
