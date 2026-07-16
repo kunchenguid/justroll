@@ -1,6 +1,15 @@
 // Pure builders for the ffmpeg argument vectors we spawn. Kept side-effect free so
 // every command we run is unit-testable without touching a device.
 
+// `-thread_queue_size` enlarges ffmpeg's per-input packet queue. The tiny default (8)
+// drops avfoundation audio packets whenever the encoder/muxer/disk briefly blocks,
+// which is heard as intermittent clicks/static - so we raise it on every live input.
+const INPUT_QUEUE = '1024';
+// Capture audio losslessly (PCM) and at a pinned video-friendly rate. PCM keeps any
+// encoder out of the realtime capture path; the AAC encode happens later, at remux.
+const AUDIO_CODEC = 'pcm_s16le';
+const AUDIO_RATE = '48000';
+
 // One recording process per source. avfoundation input is "video[:audio]".
 // `inputFormat` defaults to avfoundation; a generic format (e.g. 'lavfi' with an
 // explicit `inputSpec`) is used by the headless pipeline self-test.
@@ -23,7 +32,7 @@ export function buildRecordArgs(opts) {
   if (inputFormat === 'avfoundation') {
     const input = audioIndex == null ? `${videoIndex}` : `${videoIndex}:${audioIndex}`;
     // avfoundation input options must precede -i.
-    args.push('-f', 'avfoundation', '-framerate', String(fps));
+    args.push('-f', 'avfoundation', '-thread_queue_size', INPUT_QUEUE, '-framerate', String(fps));
     // Screens reject yuv420p; request a format the device actually supports.
     if (pixelFormat) args.push('-pixel_format', pixelFormat);
     if (captureCursor) args.push('-capture_cursor', '1');
@@ -35,7 +44,7 @@ export function buildRecordArgs(opts) {
   }
   // Hardware H.264 on Apple Silicon keeps capture CPU low.
   args.push('-c:v', codec, '-b:v', bitrate);
-  if (hasAudio) args.push('-c:a', 'aac', '-b:a', '192k');
+  if (hasAudio) args.push('-c:a', AUDIO_CODEC, '-ar', AUDIO_RATE);
   // Machine-readable progress on stdout; stdin stays free for the clean "q" stop.
   args.push('-progress', 'pipe:1');
   args.push('-y', outPath);
@@ -51,6 +60,8 @@ export function buildAudioTapArgs({ audioIndex, sampleRate = 8000, channels = 1 
     'error',
     '-f',
     'avfoundation',
+    '-thread_queue_size',
+    INPUT_QUEUE,
     '-i',
     `:${audioIndex}`,
     '-ac',
@@ -63,43 +74,130 @@ export function buildAudioTapArgs({ audioIndex, sampleRate = 8000, channels = 1 
   ];
 }
 
-// Group multiple avfoundation video inputs + one shared mic into a SINGLE ffmpeg
-// process with one mapped output per video. macOS hangs when two avfoundation
-// screen-capture *processes* run at once, so co-recorded screens must share a process.
-// `job.sources` is an ordered list of { videoIndex, outPath, inputFormat?, inputSpec? }.
-export function buildJobArgs(job, settings, mic) {
+// Group multiple avfoundation video inputs into a SINGLE ffmpeg process with one mapped
+// output per video. macOS hangs when two avfoundation screen-capture *processes* run at
+// once, so co-recorded screens must share a process.
+//
+// VIDEO ONLY - no audio is ever muxed here. The mic is recorded by its own dedicated
+// process (buildAudioRecordArgs) so nothing competes with the video encoder or a second
+// device's clock; clips are realigned afterward by their captured start timestamps.
+// `job.sources` is an ordered list of { videoIndex, outPath, fps?, inputFormat?, inputSpec? }.
+export function buildJobArgs(job, settings) {
   const sources = job.sources;
-  const synthetic = sources.some((s) => s.inputFormat && s.inputFormat !== 'avfoundation');
-  const useMic = mic != null && !synthetic;
-  const micInput = sources.length; // mic is the input after all video inputs
-
   const args = ['-hide_banner', '-loglevel', 'error', '-progress', 'pipe:1'];
   // inputs
   for (const s of sources) {
     if (s.inputFormat && s.inputFormat !== 'avfoundation') {
       args.push('-re', '-f', s.inputFormat, '-i', s.inputSpec);
     } else {
-      args.push('-f', 'avfoundation', '-framerate', String(settings.fps));
+      // Per-source framerate: cameras/capture cards are mode-locked (e.g. 1080p60) and
+      // reject the global fps, so plan.js resolves a supported `s.fps` for them.
+      args.push(
+        '-f',
+        'avfoundation',
+        '-thread_queue_size',
+        INPUT_QUEUE,
+        '-framerate',
+        String(s.fps ?? settings.fps),
+      );
       if (settings.pixelFormat) args.push('-pixel_format', settings.pixelFormat);
       if (settings.captureCursor) args.push('-capture_cursor', '1');
       args.push('-i', String(s.videoIndex));
     }
   }
-  if (useMic) args.push('-f', 'avfoundation', '-i', `:${mic.index}`);
-  // one mapped output file per video input, each muxing the shared mic
+  // one mapped video output file per input
   sources.forEach((s, i) => {
-    args.push('-map', `${i}:v`);
-    if (useMic) args.push('-map', `${micInput}:a`);
-    args.push('-c:v', settings.codec, '-b:v', settings.bitrate);
-    if (useMic) args.push('-c:a', 'aac', '-b:a', '192k');
-    args.push('-y', s.outPath);
+    args.push('-map', `${i}:v`, '-c:v', settings.codec, '-b:v', settings.bitrate, '-y', s.outPath);
   });
   return args;
 }
 
-// Fast, lossless container swap MKV -> MP4 after recording stops.
+// The mic in its own isolated process: nothing but capture -> lossless PCM, so it can't
+// drop samples while a video encoder hiccups, and there's no foreign-clock A/V drift.
+// `gain` (0..1) applies the macOS input-volume slider that avfoundation capture ignores.
+// Progress on stdout lets the recorder timestamp its start for cross-file alignment.
+export function buildAudioRecordArgs({ audioIndex, outPath, channels = 1, gain = 1 }) {
+  const args = [
+    '-hide_banner',
+    '-loglevel',
+    'error',
+    '-f',
+    'avfoundation',
+    '-thread_queue_size',
+    INPUT_QUEUE,
+    '-i',
+    `:${audioIndex}`,
+  ];
+  if (gain != null && gain !== 1) args.push('-af', `volume=${gain}`);
+  args.push(
+    '-c:a',
+    AUDIO_CODEC,
+    '-ar',
+    AUDIO_RATE,
+    '-ac',
+    String(channels),
+    '-progress',
+    'pipe:1',
+    '-y',
+    outPath,
+  );
+  return args;
+}
+
+// Grab a single frame from one screen and stream it as a tiny RGB24 raw image to
+// stdout, so the wizard can show "which desktop is this" thumbnails. Uses the exact
+// avfoundation index we'd record, so it disambiguates even two identical monitors -
+// no fragile mapping from capture index to a physical display required.
+// `force_original_aspect_ratio=decrease` + pad keeps the frame undistorted inside the
+// fixed half-block grid. Grabs MUST be run one at a time (see the screen-capture
+// invariant in recorder.js).
+export function buildScreenThumbnailArgs(opts) {
+  const {
+    videoIndex,
+    width = 24,
+    height = 12,
+    fps = 30,
+    pixelFormat = 'nv12',
+    inputFormat = 'avfoundation',
+    inputSpec = null,
+  } = opts;
+
+  const args = ['-hide_banner', '-loglevel', 'error'];
+  if (inputFormat === 'avfoundation') {
+    // Request a format the device supports (screens AND capture cards reject ffmpeg's
+    // default yuv420p), before -i like all avfoundation input options.
+    args.push('-f', 'avfoundation', '-framerate', String(fps));
+    if (pixelFormat) args.push('-pixel_format', pixelFormat);
+    args.push('-i', String(videoIndex));
+  } else {
+    args.push('-f', inputFormat, '-i', inputSpec);
+  }
+  const vf =
+    `scale=${width}:${height}:force_original_aspect_ratio=decrease,` +
+    `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:black`;
+  args.push('-frames:v', '1', '-vf', vf, '-pix_fmt', 'rgb24', '-an', '-f', 'rawvideo', 'pipe:1');
+  return args;
+}
+
+// Container swap MKV -> MP4 after recording stops. Video is copied losslessly; the PCM
+// capture audio is encoded to AAC here (MP4 can't carry PCM, and this is off the realtime
+// path). A video-only file simply has no audio stream to encode.
 export function buildRemuxArgs(inPath, outPath) {
-  return ['-hide_banner', '-loglevel', 'error', '-i', inPath, '-c', 'copy', '-y', outPath];
+  return [
+    '-hide_banner',
+    '-loglevel',
+    'error',
+    '-i',
+    inPath,
+    '-c:v',
+    'copy',
+    '-c:a',
+    'aac',
+    '-b:a',
+    '192k',
+    '-y',
+    outPath,
+  ];
 }
 
 // Parse a chunk of `-progress pipe:1` output (key=value lines) into the latest values.

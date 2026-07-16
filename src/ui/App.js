@@ -8,9 +8,17 @@ import { Frame, HintBar, Row, SettingRow, StepDots } from './components.js';
 import { Waveform } from './Waveform.js';
 import { buildPlan, ensurePlanDirs } from '../plan.js';
 import { assignLabels } from '../naming.js';
-import { FfmpegEngine, startMicTap } from '../recorder.js';
+import {
+  probeVideoModes,
+  pickFramerate,
+  macInputVolume,
+  defaultInputName,
+  resolveMicGain,
+} from '../devices.js';
+import { FfmpegEngine, startMicTap, grabScreenThumbnail } from '../recorder.js';
 import { buildNotesMarkdown, buildSessionManifest } from '../session.js';
 import { toDbfs } from '../audioMeter.js';
+import { syntheticThumbnail } from '../thumbnail.js';
 import { buildIssues } from '../health.js';
 
 const { useState, useEffect, useRef } = React;
@@ -67,6 +75,48 @@ export default function App({
   const [error, setError] = useState(null);
   const [results, setResults] = useState(null);
 
+  // Per-device preview thumbnails (index -> { status, lines }) so screens AND cameras
+  // are identifiable by what they actually show, not a bare "screen 0" / device name.
+  const [thumbs, setThumbs] = useState(() => new Map());
+  const thumbsStartedRef = useRef(new Set()); // device indexes we've already grabbed
+  const cameraFpsRef = useRef(new Map()); // camera index -> supported fps, or null if unavailable
+  const aliveRef = useRef(true);
+  useEffect(() => () => void (aliveRef.current = false), []); // unmount only
+  // Demo always previews (synthetic, no capture); real runs need true-color support.
+  const canThumb =
+    (screens.length > 0 || cameras.length > 0) &&
+    (engine ? true : terminalColorDepth(stdout) >= 24);
+
+  // Resolve a camera's working framerate once and cache it. Capture cards are mode-locked
+  // (e.g. only 1080p60), so we probe their supported modes; null means it wouldn't open.
+  function resolveCameraFps(index) {
+    const cache = cameraFpsRef.current;
+    if (cache.has(index)) return cache.get(index);
+    const modes = engine ? [{ minFps: 60, maxFps: 60 }] : probeVideoModes(index, ffmpegPath);
+    const val = modes.length ? pickFramerate(modes, fps) : null;
+    cache.set(index, val);
+    return val;
+  }
+
+  // The recording gain that honors the macOS input-volume slider (which avfoundation
+  // capture otherwise ignores). Resolved on the review step and reused when recording.
+  const [micGain, setMicGain] = useState(null);
+  function resolveGain() {
+    if (micIdx == null) return 1;
+    const name = (audio.find((a) => a.index === micIdx) || {}).name;
+    if (engine) return config.audioGain != null ? config.audioGain : 1;
+    return resolveMicGain({
+      micName: name,
+      override: config.audioGain,
+      volume: macInputVolume(),
+      defaultName: defaultInputName(),
+    });
+  }
+  // Resolve the input gain once on the review step (reads the macOS slider via osascript).
+  useEffect(() => {
+    if (phase === 'wizard' && step === 3 && micIdx != null) setMicGain(resolveGain());
+  }, [phase, step, micIdx]);
+
   // live recording state
   const [, setFrame] = useState(0);
   const levelsRef = useRef([]);
@@ -117,6 +167,67 @@ export default function App({
     };
   }, [phase, step, micIdx, engine, ffmpegPath]);
 
+  // Grab a thumbnail of each device the first time its picker step (cameras=1, screens=2)
+  // is shown. Grabs run STRICTLY sequentially - two concurrent avfoundation SCREEN
+  // captures deadlock macOS (the invariant in recorder.js). Results stream in so previews
+  // appear one by one; failures fall back to a placeholder, never blocking selection.
+  useEffect(() => {
+    const list =
+      phase === 'wizard' && step === 1
+        ? cameras
+        : phase === 'wizard' && step === 2
+          ? screens
+          : null;
+    if (!list || !canThumb) return;
+    const pending = list.filter((d) => !thumbsStartedRef.current.has(d.index));
+    if (!pending.length) return;
+    for (const d of pending) thumbsStartedRef.current.add(d.index);
+    setThumbs((prev) => {
+      const m = new Map(prev);
+      for (const d of pending) m.set(d.index, { status: 'loading' });
+      return m;
+    });
+
+    if (engine) {
+      // demo: synthesize instantly, never touches a real device
+      setThumbs((prev) => {
+        const m = new Map(prev);
+        pending.forEach((d, i) =>
+          m.set(d.index, {
+            status: 'ok',
+            lines: syntheticThumbnail(d.index + i, THUMB_W, THUMB_PX_H),
+          }),
+        );
+        return m;
+      });
+      return;
+    }
+
+    (async () => {
+      for (const d of pending) {
+        if (!aliveRef.current) return;
+        // Cameras are mode-locked; grab at a framerate the device supports (null = dead).
+        const camFps = d.kind === 'camera' ? resolveCameraFps(d.index) : null;
+        const t =
+          d.kind === 'camera' && camFps == null
+            ? null
+            : await grabScreenThumbnail({
+                ffmpegPath,
+                videoIndex: d.index,
+                width: THUMB_W,
+                height: THUMB_PX_H,
+                fps: camFps ?? fps,
+              });
+        if (!aliveRef.current) return;
+        setThumbs((prev) => {
+          const m = new Map(prev);
+          m.set(d.index, t ? { status: 'ok', lines: t.lines } : { status: 'fail' });
+          return m;
+        });
+      }
+    })();
+  }, [phase, step, canThumb, engine, ffmpegPath]);
+
   const nameOfVideo = (idx) =>
     (devices.video.find((d) => d.index === idx) || {}).name || `video ${idx}`;
 
@@ -153,10 +264,19 @@ export default function App({
   function startRecording() {
     const selectedSources = buildSelectedSources();
     if (selectedSources.length === 0) return;
+    // Resolve each camera's framerate from its supported modes (capture cards are
+    // mode-locked, e.g. only 1080p60, and reject the global fps).
+    for (const s of selectedSources) {
+      if (s.type !== 'camera') continue;
+      const camFps = resolveCameraFps(s.deviceIndex);
+      if (camFps != null) s.fps = camFps;
+    }
     const mic =
       micIdx == null
         ? null
         : { index: micIdx, name: (audio.find((a) => a.index === micIdx) || {}).name };
+    // Honor the macOS input-volume slider (avfoundation capture ignores it).
+    if (mic) mic.gain = micGain != null ? micGain : resolveGain();
     const cfg = { ...config, remuxToMp4: mp4, video: { ...config.video, fps } };
     let plan;
     try {
@@ -170,6 +290,7 @@ export default function App({
     }
     planRef.current = plan;
     for (const s of plan.sources) statusRef.current.set(s.label, { state: 'recording' });
+    if (plan.audio) statusRef.current.set('audio', { state: 'recording' });
 
     const rec = (engine || new FfmpegEngine({ ffmpegPath })).createRecording(plan);
     recorderRef.current = rec;
@@ -345,9 +466,17 @@ export default function App({
           >`
         : noMicNote();
     } else if (step === 1) {
-      body = cameras.length ? listBody(cameras, cursor, camSel, true, C.camera) : noCamerasNote();
+      body = !cameras.length
+        ? noCamerasNote()
+        : canThumb
+          ? thumbListBody(cameras, camSel, C.camera)
+          : listBody(cameras, cursor, camSel, true, C.camera);
     } else if (step === 2) {
-      body = screens.length ? listBody(screens, cursor, scrSel, true, C.screen) : noScreensNote();
+      body = !screens.length
+        ? noScreensNote()
+        : canThumb
+          ? thumbListBody(screens, scrSel, C.screen)
+          : listBody(screens, cursor, scrSel, true, C.screen);
     } else {
       body = reviewBody();
     }
@@ -427,6 +556,55 @@ export default function App({
     `;
   }
 
+  // A device's preview, or a same-footprint placeholder while it loads / if it failed,
+  // so the list never reflows as thumbnails stream in.
+  function screenThumbView(idx) {
+    const t = thumbs.get(idx);
+    if (t && t.status === 'ok') {
+      return html`<${Box} flexDirection="column">
+        ${t.lines.map((ln, i) => html`<${Text} key=${i}>${ln}</${Text}>`)}
+      <//>`;
+    }
+    const fill = (t && t.status === 'fail' ? '·' : '░').repeat(THUMB_W);
+    return html`<${Box} flexDirection="column">
+      ${Array.from(
+        { length: THUMB_ROWS },
+        (_, i) => html`<${Text} key=${i} color=${C.border}>${fill}</${Text}>`,
+      )}
+    <//>`;
+  }
+
+  // Cameras / screens step: each row pairs a live thumbnail with the selectable label,
+  // so two identical monitors (or an ambiguous capture card) are told apart by what they
+  // actually show.
+  function thumbListBody(items, selSet, accent) {
+    const labelWidth = Math.max(24, contentWidth - THUMB_W - 2);
+    return html`
+      <${Box} flexDirection="column">
+        ${items.map((d, i) => {
+          const selected = selSet.has(d.index);
+          const focused = i === cursor;
+          const rowMeta =
+            focused && !selected ? 'space to select' : selected ? `${G.tick} selected` : null;
+          return html`<${Box} key=${d.index} marginBottom=${1}>
+            ${screenThumbView(d.index)}
+            <${Box} flexDirection="column" justifyContent="center" marginLeft=${1}>
+              <${Row}
+                focused=${focused}
+                selected=${selected}
+                multi=${true}
+                label=${d.name}
+                meta=${rowMeta}
+                accent=${accent}
+                width=${labelWidth}
+              />
+            <//>
+          <//>`;
+        })}
+      <//>
+    `;
+  }
+
   function reviewBody() {
     const preview = assignLabels(buildSelectedSources());
     const mic = audio.find((a) => a.index === micIdx);
@@ -439,12 +617,20 @@ export default function App({
                 (s) =>
                   html`<${Box} key=${s.label} justifyContent="space-between" width=${contentWidth}>
                 <${Text} color=${accentForType(s.type)}>${s.deviceName}</${Text}>
-                <${Text} color=${C.dim}>${mic ? G.tick + ' ' + mic.name + '   ' : ''}${s.label}.${config.video.container}</${Text}>
+                <${Text} color=${C.dim}>${s.label}.${config.video.container}</${Text}>
               <//>`,
               )
         }
+        ${
+          mic
+            ? html`<${Box} justifyContent="space-between" width=${contentWidth}>
+                <${Text} color=${C.mic}>${G.film} ${mic.name}</${Text}>
+                <${Text} color=${C.dim}>${micGain != null && micGain < 1 ? `${Math.round(micGain * 100)}% · ` : ''}audio.wav</${Text}>
+              <//>`
+            : null
+        }
         <${Box} marginTop=${1}>
-          <${Text} color=${C.dim}>${preview.length} file${preview.length === 1 ? '' : 's'} · ${config.video.container}</${Text}>
+          <${Text} color=${C.dim}>${preview.length} video${preview.length === 1 ? '' : 's'}${mic ? ' + audio' : ''} · ${config.video.container}</${Text}>
         <//>
         <${Box} marginTop=${1} flexDirection="column">
           <${SettingRow} focused=${cursor === 0} label="Frame rate" value=${fps + ' fps'} width=${contentWidth} />
@@ -530,6 +716,23 @@ export default function App({
               <//>
             `;
           })}
+          ${(() => {
+            if (!plan.audio) return null;
+            const ast = statsRef.current.get('audio') || {};
+            const astatus = statusRef.current.get('audio') || {};
+            const afailed = astatus.state === 'error';
+            return html`<${Box} justifyContent="space-between">
+              <${Box}>
+                <${Text} color=${afailed ? C.rec : C.ok}>${afailed ? G.cross : G.dot} </${Text}>
+                <${Text} color=${C.text}>${'audio.wav        '.slice(0, 16)}</${Text}>
+              <//>
+              ${
+                afailed
+                  ? html`<${Text} color=${C.rec}>${astatus.msg || 'failed'}</${Text}>`
+                  : html`<${Text} color=${C.dim}>${fmtBytes(ast.bytes)}</${Text}>`
+              }
+            <//>`;
+          })()}
           <${Box} flexDirection="column" marginTop=${1}>
             <${Box} justifyContent="space-between">
               <${Text} color=${C.mic}>${G.film} ${plan.mic ? plan.mic.name : 'no mic'}</${Text}>
@@ -641,6 +844,22 @@ const noMicNote = () =>
     '- Connect a mic - without one, clips have no audio sync track.',
     '- Grant Microphone access in System Settings > Privacy & Security.',
   ]);
+// Screen-preview thumbnail grid. Width in terminal cells; height in *pixels* (two
+// pixels stack into one half-block cell, so 12px -> 6 rendered rows).
+const THUMB_W = 24;
+const THUMB_PX_H = 12;
+const THUMB_ROWS = THUMB_PX_H / 2;
+
+// Half-block thumbnails need 24-bit color; degrade to plain labels otherwise.
+function terminalColorDepth(stdout) {
+  try {
+    if (stdout && typeof stdout.getColorDepth === 'function') return stdout.getColorDepth();
+  } catch {
+    /* not a tty */
+  }
+  return 0;
+}
+
 const REVIEW_SETTINGS = 2; // frame rate, mp4 remux
 const FPS_OPTIONS = [24, 30, 48, 60];
 function nextFps(v) {

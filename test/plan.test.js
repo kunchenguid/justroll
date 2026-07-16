@@ -34,9 +34,22 @@ test('buildPlan resolves dirs, files, and ffmpeg indexes', () => {
     ['screen-0.mkv', 'camera.mkv'],
   );
   assert.equal(plan.sources[0].videoIndex, 1);
-  assert.equal(plan.sources[0].audioIndex, 2); // mic embedded in every file
-  assert.equal(plan.sources[1].audioIndex, 2);
+  // every clip is video-only; the mic gets its own dedicated file
+  assert.ok(plan.sources.every((s) => s.audioIndex === undefined && s.carriesMic === undefined));
+  assert.deepEqual(plan.audio, {
+    index: 2,
+    fileName: 'audio.wav',
+    outPath: '/tmp/rec/2026-06-01_leave-big-tech-2/raw/audio.wav',
+    gain: 1, // mic with no resolved gain -> full
+  });
   assert.equal(plan.settings.remuxToMp4, true);
+});
+
+test('buildPlan carries a per-source framerate (mode-locked cameras)', () => {
+  const plan = makePlan({
+    selectedSources: [{ type: 'camera', deviceIndex: 0, deviceName: 'cam', fps: 60 }],
+  });
+  assert.equal(plan.sources[0].fps, 60);
 });
 
 test('buildPlan disambiguates a taken directory', () => {
@@ -44,28 +57,36 @@ test('buildPlan disambiguates a taken directory', () => {
   assert.equal(plan.dirName, '2026-06-01_leave-big-tech-2-2');
 });
 
-test('buildPlan can skip the mic', () => {
+test('buildPlan has no audio output when there is no mic', () => {
   const plan = makePlan({ mic: null });
   assert.equal(plan.mic, null);
-  assert.equal(plan.sources[0].audioIndex, null);
+  assert.equal(plan.audio, null);
 });
 
-test('session manifest summarizes sources', () => {
+test('session manifest summarizes sources and the dedicated audio file', () => {
   const plan = makePlan();
   const m = buildSessionManifest(plan, {
     startedAt: 'a',
     endedAt: 'b',
-    results: [{ label: 'screen-0', bytes: 100, seconds: 3, mp4: '/x.mp4' }],
+    results: [
+      { label: 'screen-0', bytes: 100, seconds: 3, mp4: '/x.mp4', startOffsetMs: 0 },
+      { label: 'audio', bytes: 50, seconds: 3, startOffsetMs: 40 },
+    ],
   });
   assert.equal(m.tool, 'justroll');
   assert.equal(m.mic, 'RODE NT-USB');
   assert.equal(m.sources[0].bytes, 100);
   assert.equal(m.sources[0].mp4, '/x.mp4');
+  assert.equal(m.sources[0].startOffsetMs, 0);
+  assert.equal(m.audio.file, 'audio.wav');
+  assert.equal(m.audio.startOffsetMs, 40); // place the audio 40ms in to align
 });
 
-test('notes markdown contains the sync-by-audio recipe', () => {
+test('notes markdown explains start-offset alignment and the separate audio file', () => {
   const md = buildNotesMarkdown(makePlan());
   assert.match(md, /sync/i);
+  assert.match(md, /startOffsetMs/);
   assert.match(md, /screen-0\.mkv/);
+  assert.match(md, /audio\.wav/);
   assert.match(md, /RODE NT-USB/);
 });

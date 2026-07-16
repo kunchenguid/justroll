@@ -132,6 +132,7 @@ async function selftest(config, args) {
       bytes: r.bytes,
       seconds: r.seconds,
       mp4: r.mp4,
+      startOffsetMs: r.startOffsetMs,
     })),
   });
   fs.writeFileSync(path.join(plan.dir, 'session.json'), JSON.stringify(manifest, null, 2) + '\n');

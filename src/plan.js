@@ -5,9 +5,11 @@ import fs from 'node:fs';
 import { expandHome } from './config.js';
 import { sessionDirName, uniqueDirName, assignLabels, fileName } from './naming.js';
 
+const AUDIO_FILE = 'audio.wav';
+
 export function buildPlan({
   title,
-  selectedSources, // [{ type:'screen'|'camera', deviceIndex, deviceName }]
+  selectedSources, // [{ type:'screen'|'camera', deviceIndex, deviceName, fps? }]
   mic, // { index, name } | null
   config,
   date = new Date(),
@@ -19,9 +21,11 @@ export function buildPlan({
   const dir = path.join(baseDir, dirName);
   const rawDir = path.join(dir, 'raw');
   const container = config.video.container || 'mkv';
-  const embedMic = config.defaults?.embedMicInEveryFile !== false && mic != null;
+  const recordMic = config.defaults?.embedMicInEveryFile !== false && mic != null;
 
   const labeled = assignLabels(selectedSources);
+  // Every clip is video-only; the mic gets its own isolated file (below). Clips realign
+  // afterward by their captured start timestamps, not by muxed audio.
   const sources = labeled.map((s) => {
     const fn = fileName(s.label, container);
     return {
@@ -29,7 +33,7 @@ export function buildPlan({
       fileName: fn,
       outPath: path.join(rawDir, fn),
       videoIndex: s.deviceIndex,
-      audioIndex: embedMic ? mic.index : null,
+      fps: s.fps, // per-source rate (cameras run at a supported mode); undefined -> global
     };
   });
 
@@ -40,7 +44,17 @@ export function buildPlan({
     rawDir,
     exportsDir: path.join(dir, 'exports'),
     projectDir: path.join(dir, 'project'),
-    mic: embedMic ? mic : null,
+    mic: recordMic ? mic : null,
+    // The dedicated, isolated audio capture (PCM WAV) - or null when there's no mic.
+    // `gain` (0..1) is the macOS input-volume the caller resolved; defaults to full.
+    audio: recordMic
+      ? {
+          index: mic.index,
+          fileName: AUDIO_FILE,
+          outPath: path.join(rawDir, AUDIO_FILE),
+          gain: mic.gain ?? 1,
+        }
+      : null,
     settings: {
       fps: config.video.fps,
       codec: config.video.codec,

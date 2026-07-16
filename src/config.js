@@ -13,6 +13,8 @@ export const DEFAULT_CONFIG = {
   },
   remuxToMp4: true, // default ON; the wizard review screen can flip it per-session
   captureCursor: true,
+  audioGain: null, // null = follow the macOS input-volume slider; a 0..1 number overrides it
+
   defaults: { mic: 'RODE NT-USB', embedMicInEveryFile: true },
   rememberLastSelection: true,
   lastSelection: null,

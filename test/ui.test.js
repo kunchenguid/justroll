@@ -84,7 +84,7 @@ test('walking the wizard reaches a review with all three files', async () => {
   assert.match(f, /screen-0\.mkv/);
   assert.match(f, /screen-1\.mkv/);
   assert.match(f, /camera\.mkv/);
-  assert.match(f, /3 files/);
+  assert.match(f, /3 videos/);
   assert.match(f, /Frame rate/);
   assert.match(f, /30 fps/);
   // review settings are navigable rows; the focused one (frame rate) changes with space/→
