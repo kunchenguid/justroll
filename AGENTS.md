@@ -68,4 +68,12 @@ ink + React written with `htm` template literals (`html\`...\``) — there is **
 
 - ESM only, Node built-ins via `node:` prefix. Comments explain _why_ (especially the platform quirks) — keep that style.
 - Releases are automated by **release-please**; do not hand-edit `CHANGELOG.md` or version fields.
+- PR workflows ignore release-please outputs via `paths-ignore` so release PRs create zero runs; keep that set complete with `scripts/check-release-ci-exclusions.sh` (wired early in `ci.yml`).
 - Prettier + eslint are enforced in CI (`.github/workflows/ci.yml`); `format:check` must pass.
+
+## Maintaining this file
+
+Keep this file for knowledge useful to almost every future agent session in this project.
+Do not repeat what the codebase already shows; point to the authoritative file or command instead.
+Prefer rewriting or pruning existing entries over appending new ones.
+When updating this file, preserve this bar for all agents and keep entries concise.
