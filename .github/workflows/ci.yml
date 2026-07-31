@@ -3,8 +3,15 @@ name: CI
 on:
   push:
     branches: [main]
+  # release-please opens its release PR with GITHUB_TOKEN, which creates a
+  # pull_request run that can only sit in action_required. Its output set is
+  # exactly these files, so excluding them means no run is ever created.
   pull_request:
     branches: [main]
+    paths-ignore:
+      - .release-please-manifest.json
+      - CHANGELOG.md
+      - package.json
 
 jobs:
   build-and-test:
@@ -15,6 +22,11 @@ jobs:
         os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
+
+      - name: Assert release-please PR CI exclusions
+        if: matrix.os == 'ubuntu-latest'
+        run: bash scripts/check-release-ci-exclusions.sh
+
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
