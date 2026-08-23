@@ -2,6 +2,10 @@ packages:
   - "."
 
 # Supply-chain guardrails.
+# Prevent malicious package updates from downgrading security settings.
+trustPolicy: no-downgrade
+# Block transitive dependencies from being installed from untrusted sources.
+blockExoticSubdeps: true
 # Refuse to install package versions published within the last 7 days (10080
 # minutes), giving time for a malicious or compromised release to be caught and
 # yanked before it lands in the lockfile. Strict mode fails the install rather
