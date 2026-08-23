@@ -1,0 +1,3 @@
+PASS: pinned commit 32d396ac0f29135daf7fcb9964aba9d5f4e796d6 is not the target or peeled target of any published tag.
+PASS: newest published GitHub release object is v1.57.1 (prerelease=true); v1.58.0 is not published.
+PASS: the caller accurately labels the pinned commit post-v1.57.1 and untagged.

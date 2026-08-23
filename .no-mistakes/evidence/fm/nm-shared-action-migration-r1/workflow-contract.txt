@@ -1,0 +1,6 @@
+PASS: normalized workflow preserves every semantic field except the intended trigger and implementation step.
+PASS: pull_request types are opened, edited, reopened; synchronize is absent.
+PASS: required check name and exact job-level bot exemptions are preserved.
+PASS: the only step calls the shared action at immutable SHA 32d396ac0f29135daf7fcb9964aba9d5f4e796d6 with no action-level exemptions.
+PASS: read-only pull_request boundary remains intact, with no checkout or run step.
+PASS: this commit changes no workflow or file other than .github/workflows/no-mistakes-required.yml.

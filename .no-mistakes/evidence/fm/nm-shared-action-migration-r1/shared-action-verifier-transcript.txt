@@ -1,0 +1,49 @@
+Pinned shared verifier: kunchenguid/no-mistakes@32d396ac0f29135daf7fcb9964aba9d5f4e796d6
+Execution mode: pull_request event-payload fallback, matching the thin caller's no-input invocation
+
+=== compliant (exit 0) ===
+Found no-mistakes signature in PR #42 body.
+Found structurally compliant pipeline step attestation.
+::warning::PR-body attestation is author-editable and is not cryptographic proof that no-mistakes produced it.
+outputs:
+exempt=false
+compliant=true
+=== intended-last-wins (exit 0) ===
+Found no-mistakes signature in PR #42 body.
+Found structurally compliant pipeline step attestation.
+::warning::PR-body attestation is author-editable and is not cryptographic proof that no-mistakes produced it.
+outputs:
+exempt=false
+compliant=true
+=== stale-head-rejected (exit 1) ===
+::error::Pipeline attestation head_sha does not match the current PR head.
+
+attestation.head_sha: abc123
+PR head: def456
+
+A later push must not pass on an older attestation. Re-run 'git push no-mistakes' so the PR body attestation binds to the current head.
+
+See CONTRIBUTING.md for setup and the full workflow.
+
+PR author: contributor
+Found no-mistakes signature in PR #42 body.
+outputs:
+exempt=false
+compliant=false
+exempt=false
+=== missing-signature-rejected (exit 1) ===
+::error::This PR was not raised through no-mistakes.
+
+Contributions to this repository must be submitted via 'git push no-mistakes'.
+That pipeline runs the required review/test/lint/CI steps and writes a
+deterministic '## Pipeline' section into the PR body containing:
+
+    Updates from [git push no-mistakes](https://github.com/kunchenguid/no-mistakes)
+
+See CONTRIBUTING.md for setup and the full workflow.
+
+PR author: contributor
+outputs:
+exempt=false
+compliant=false
+exempt=false
